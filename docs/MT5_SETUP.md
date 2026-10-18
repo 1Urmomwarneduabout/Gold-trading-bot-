@@ -29,8 +29,8 @@ terminal running on the same machine.
 1. Install 64-bit **Python 3.12** from python.org (tick "Add python.exe to PATH").
 2. In a terminal (PowerShell):
    ```powershell
-   git clone https://github.com/<you>/gold-trading-bot.git
-   cd gold-trading-bot
+   git clone https://github.com/1Urmomwarneduabout/Gold-trading-bot-.git
+   cd Gold-trading-bot-
    py -m venv .venv
    .venv\Scripts\activate
    pip install -e ".[mt5,plot]"
@@ -130,9 +130,9 @@ broker's server, about $15-40/month):
    configure Windows to log in automatically after a reboot.
 3. **Task Scheduler > Create Task**:
    * Trigger: *At log on*.
-   * Action: start `C:\path\to\gold-trading-bot\.venv\Scripts\goldbot.exe`
+   * Action: start `C:\path\to\Gold-trading-bot-\.venv\Scripts\goldbot.exe`
      with arguments `live run --config live.toml`, *Start in*
-     `C:\path\to\gold-trading-bot`.
+     `C:\path\to\Gold-trading-bot-`.
    * Settings: *If the task fails, restart every 1 minute*, up to 999 times.
      Untick *Stop the task if it runs longer than...*.
 4. Reboot once to prove everything comes back by itself.
