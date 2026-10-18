@@ -1,0 +1,125 @@
+"""`goldbot live ...` commands for MetaTrader 5."""
+
+import argparse
+import logging
+import logging.handlers
+from dataclasses import replace
+from pathlib import Path
+
+from .live import LiveTrader, load_config, lots_for, reset_halt, run_forever
+from .notify import Notifier
+from .state import load_state
+from .strategy import compute_signals
+
+
+def _setup_logging(state_dir: str) -> None:
+    Path(state_dir).mkdir(parents=True, exist_ok=True)
+    file_handler = logging.handlers.RotatingFileHandler(Path(state_dir) / "goldbot.log", maxBytes=5_000_000, backupCount=5)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        handlers=[logging.StreamHandler(), file_handler],
+    )
+
+
+def _connect(live_cfg):
+    from .mt5_broker import MT5Broker
+
+    broker = MT5Broker(deviation_points=live_cfg.deviation_points)
+    broker.connect()
+    return broker
+
+
+def cmd_check(a: argparse.Namespace) -> None:
+    live_cfg, strategy, risk = load_config(a.config)
+    broker = _connect(live_cfg)
+    try:
+        acct = broker.account()
+        spec = broker.symbol_spec(live_cfg.symbol)
+        tick = broker.tick(live_cfg.symbol)
+        bars = broker.daily_bars(live_cfg.symbol, live_cfg.history_bars)
+        positions = broker.positions(live_cfg.symbol)
+        state = load_state(live_cfg.state_file)
+
+        print(f"Account   {acct.login}  {'REAL MONEY' if acct.is_real else 'demo'}  equity {acct.equity:,.2f} {acct.currency}")
+        if acct.is_real and not live_cfg.allow_live:
+            print("          The bot will refuse to trade this account until allow_live = true.")
+        print(f"Symbol    {spec.name}  {spec.contract_size:g} oz/lot  volume min {spec.volume_min} step {spec.volume_step} max {spec.volume_max}")
+        print(f"          digits {spec.digits}  min stop distance {spec.stops_level} points  swap long {spec.swap_long} short {spec.swap_short} (broker units)")
+        print(f"Price     bid {tick.bid}  ask {tick.ask}  spread {tick.spread:.2f}  server time {tick.time}")
+        print(f"History   {len(bars)} completed daily bars, {bars.index[0].date()} to {bars.index[-1].date()} (need {strategy.warmup})")
+
+        if len(bars) >= strategy.warmup:
+            sig = compute_signals(bars, strategy).iloc[-1]
+            flags = [k for k in ("long_entry", "short_entry", "long_exit", "short_exit") if sig[k]]
+            print(f"Strategy  last close {bars['close'].iloc[-1]:.2f}  trend SMA {sig['trend']:.2f}  ATR {sig['atr']:.2f}  signals: {', '.join(flags) or 'none'}")
+            stop = strategy.stop_atr * sig["atr"]
+            lots = lots_for(acct.equity, tick.ask, stop, spec, risk)
+            if lots:
+                print(f"Sizing    a new trade now would be {lots} lots with a {stop:.2f} stop (risk ~{lots * spec.contract_size * stop:,.0f})")
+            else:
+                print(f"Sizing    TOO SMALL: {risk.risk_per_trade:.1%} risk cannot afford {spec.volume_min} lots with a {stop:.2f} stop")
+
+        ours = [p for p in positions if p.magic == live_cfg.magic]
+        print(f"Positions {len(ours)} from this bot (magic {live_cfg.magic}), {len(positions) - len(ours)} others on {spec.name} (ignored)")
+        print(f"State     last bar {state.last_bar}  halted {state.halted} {state.halt_reason}  position {state.position}")
+        print(f"\nFor backtests on this broker use: --spread {tick.spread:.2f} --lot-step {spec.volume_step * spec.contract_size:g}")
+    finally:
+        broker.shutdown()
+
+
+def cmd_run(a: argparse.Namespace) -> None:
+    live_cfg, strategy, risk = load_config(a.config)
+    if a.dry_run:
+        live_cfg = replace(live_cfg, dry_run=True)
+    _setup_logging(live_cfg.state_dir)
+    broker = _connect(live_cfg)
+    trader = LiveTrader(broker, live_cfg, strategy, risk, Notifier.from_env())
+    try:
+        if a.once:
+            print(trader.run_once())
+        else:
+            run_forever(trader, live_cfg, reconnect=broker.ensure_connected)
+    finally:
+        broker.shutdown()
+
+
+def cmd_reset_halt(a: argparse.Namespace) -> None:
+    live_cfg, _, _ = load_config(a.config)
+    broker = _connect(live_cfg)
+    try:
+        print(reset_halt(broker, live_cfg))
+    finally:
+        broker.shutdown()
+
+
+def cmd_export(a: argparse.Namespace) -> None:
+    live_cfg, _, _ = load_config(a.config)
+    broker = _connect(live_cfg)
+    try:
+        bars = broker.daily_bars(live_cfg.symbol, a.bars)
+        Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+        bars.to_csv(a.out)
+        print(f"Wrote {len(bars):,} daily bars ({bars.index[0].date()} to {bars.index[-1].date()}) to {a.out}")
+    finally:
+        broker.shutdown()
+
+
+def add_live_commands(sub) -> None:
+    live = sub.add_parser("live", help="paper or live trading through MetaTrader 5")
+    live_sub = live.add_subparsers(dest="live_command", required=True)
+
+    def command(name, func, help_text):
+        p = live_sub.add_parser(name, help=help_text)
+        p.add_argument("--config", default="live.toml", help="TOML config file (default live.toml)")
+        p.set_defaults(func=func)
+        return p
+
+    command("check", cmd_check, "connect and show account, symbol, sizing and state without trading")
+    p = command("run", cmd_run, "run the bot")
+    p.add_argument("--once", action="store_true", help="do a single pass and exit")
+    p.add_argument("--dry-run", action="store_true", help="log orders instead of sending them")
+    command("reset-halt", cmd_reset_halt, "clear the kill switch after reviewing what happened")
+    p = command("export-history", cmd_export, "save the broker's daily bars to CSV for backtesting")
+    p.add_argument("--bars", type=int, default=5000)
+    p.add_argument("--out", default="data/broker_d1.csv")
