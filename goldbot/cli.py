@@ -8,7 +8,10 @@ from pathlib import Path
 import pandas as pd
 
 from .backtest import CostConfig, run_backtest
+from .broker import BrokerError
 from .data import load_daily, synthetic_daily
+from .live import SafetyError
+from .live_cli import add_live_commands
 from .metrics import format_metrics
 from .risk import RiskConfig
 from .strategy import StrategyConfig
@@ -185,12 +188,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("output")
     p.add_argument("--roll-hour", type=int, default=22)
     p.set_defaults(func=cmd_resample)
+
+    add_live_commands(sub)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    args.func(args)
+    try:
+        args.func(args)
+    except (BrokerError, SafetyError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 

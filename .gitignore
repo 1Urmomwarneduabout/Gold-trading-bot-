@@ -11,3 +11,5 @@ results/
 # Never commit broker credentials
 .env
 *.key
+live.toml
+state/

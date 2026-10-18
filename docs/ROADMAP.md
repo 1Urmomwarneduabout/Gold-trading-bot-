@@ -9,36 +9,29 @@
 - [x] Parameter sweep, walk-forward and Monte Carlo validation
 - [ ] Run the go-live checklist in the README on real broker data
 
-## Phase 2: paper trading
+## Phase 2: paper trading on MetaTrader 5
 
-Pick one route:
-
-| Route | Instrument | Notes |
-|---|---|---|
-| OANDA v20 REST API | XAU_USD CFD | Simple Python API, free practice account. Not available in every country. |
-| Interactive Brokers (`ib_async`) | MGC micro gold futures (10 oz) | Exchange pricing, no CFD swap, but roll the contract every ~2 months. |
-| MetaTrader 5 (`MetaTrader5` Python package) | XAUUSD CFD | Widest broker choice; Python package is Windows-only. |
-
-Build:
-
-- [ ] `broker.py`: a small interface (`get_daily_bars`, `get_position`, `get_equity`,
-      `market_order`, `place_stop`, `cancel_stop`) with one implementation for the chosen broker
-- [ ] `live.py`: once a day, shortly after the 22:00 UTC daily close: fetch bars, run
-      `compute_signals`, size with `position_size`, place the order at the open and a
-      **real stop order on the broker's server** (never rely on the bot being online to stop out)
-- [ ] Reconcile on every start-up: compare the bot's state with the broker's positions
-      and orders; refuse to trade and alert if they differ
-- [ ] Persist state (open trade, stop, equity peak) in SQLite so restarts are safe
-- [ ] Compare paper signals with the backtest run on the same dates every week
+- [x] `broker.py` interface and `mt5_broker.py` implementation (official `MetaTrader5` package)
+- [x] `live.py`: once per completed daily bar, run `compute_signals` + `decide`, size with
+      `position_size`, and send market orders with a **stop-loss held on the broker's server**
+- [x] Reconcile with the broker on every pass; halt on anything unexplained; restore missing stops
+- [x] Restart-safe state file and trade journal
+- [x] Demo-only unless `allow_live = true`; dry-run mode
+- [x] Telegram alerts and heartbeat URL
+- [ ] Run `goldbot live check` against your broker and fix anything it flags
+- [ ] Backtest on `goldbot live export-history` data with your broker's spread and swap
+- [ ] Paper trade on a demo account for 1-3 months
+- [ ] Every week, compare the bot's trades with a backtest over the same dates
 
 ## Phase 3: live trading and upkeep
 
 Hosting and monitoring:
 
-- [ ] Run on a VPS near the broker's servers (~$10-30/month), as a systemd service that restarts on failure
-- [ ] Telegram or Discord alerts: every order and fill, errors, disconnects, kill-switch trips, daily P&L
-- [ ] Heartbeat: an external check that alerts when the bot has NOT reported in (silence is the dangerous failure)
-- [ ] Logs of every signal, order and fill; code in git with a tag for each version that goes live
+- [ ] Run on a Windows VPS near the broker's servers (~$15-40/month), started by Task Scheduler at boot (see docs/MT5_SETUP.md)
+- [x] Telegram alerts: every order and fill, errors, kill-switch trips, daily summary
+- [x] Heartbeat URL support; set up a healthchecks.io check so silence alerts you
+- [x] Log file and trade journal
+- [ ] Tag each version that goes live in git
 
 Regular upkeep:
 

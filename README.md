@@ -36,13 +36,39 @@ cheap and robust.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[plot,dev]"
-pytest                                  # 21 tests, about 2 seconds
+pytest                                  # 42 tests, about 2 seconds
 
 goldbot backtest synthetic              # demo on SYNTHETIC random prices
 goldbot backtest data/xauusd_d1.csv     # your real data
 ```
 
 Each command writes CSVs, a `summary.json` and an equity chart to `results/`.
+
+## Paper and live trading with MetaTrader 5
+
+`goldbot live` runs the same signal, decision and sizing code as the
+backtester against an MT5 account. Full setup steps are in
+[docs/MT5_SETUP.md](docs/MT5_SETUP.md); in short (on Windows, with the MT5
+terminal logged in to a **demo** account and Algo Trading switched on):
+
+```bash
+pip install -e ".[mt5,plot]"
+copy live.example.toml live.toml        # then edit symbol name etc.
+goldbot live check                      # read-only: account, symbol, sizing, signals
+goldbot live export-history             # broker's own daily bars -> data/broker_d1.csv
+goldbot live run --dry-run              # logs orders without sending them
+goldbot live run                        # paper trade on the demo account
+```
+
+Safety rails built in:
+
+* Refuses to trade a real-money account unless `allow_live = true`.
+* Every position has its stop-loss on the broker's server, so it is protected if the bot or VPS dies; a missing stop is put back.
+* Acts once per daily bar, waits out the rollover spread spike, and postpones trading while the spread is too wide.
+* Checks its memory against the broker's positions on every pass, and halts on anything it can't explain. It ignores your manual trades (they don't carry its magic number).
+* The same daily-loss and max-drawdown kill switches as the backtest; a drawdown halt closes the position and waits for `goldbot live reset-halt`.
+* State is saved atomically, so restarts are safe; every action is written to `state/journal.csv`.
+* Optional Telegram alerts and a dead-man's-switch heartbeat URL.
 
 ## Getting real gold data
 
@@ -54,8 +80,8 @@ at 22:00 UTC, gold's 5pm New York close).
   ```bash
   npx dukascopy-node -i xauusd -from 2010-01-01 -to 2026-10-01 -t d1 -f csv -dir data
   ```
-* **MetaTrader 5**: open the XAUUSD chart on your broker, set the D1 timeframe,
-  then File > Save As (or export from View > Symbols > Bars).
+* **MetaTrader 5**: `goldbot live export-history` saves your broker's daily
+  bars directly (see below), or export from View > Symbols > Bars.
 * **Your broker's API** (OANDA, IBKR): download daily candles to CSV.
 
 Backtest on data from **the broker you will trade with** where possible.
@@ -117,6 +143,14 @@ goldbot/
   metrics.py     CAGR, Sharpe, Sortino, drawdown, MAR, win rate, expectancy
   validate.py    parameter sweep, walk-forward, Monte Carlo
   cli.py         command line
-tests/           21 tests, including a no-lookahead check
-docs/ROADMAP.md  paper trading, live execution, monitoring and upkeep
+  broker.py      what the live bot needs from a broker
+  mt5_broker.py  MetaTrader 5 implementation
+  live.py        live loop: reconcile, kill switches, once-per-bar decisions, orders
+  live_cli.py    goldbot live check / run / reset-halt / export-history
+  state.py       restart-safe state file and trade journal
+  notify.py      Telegram alerts and heartbeat pings
+tests/           42 tests, including a no-lookahead check and the live loop against a fake broker
+live.example.toml  live bot settings
+docs/MT5_SETUP.md  step-by-step MetaTrader 5 setup
+docs/ROADMAP.md    what's done, what's next, and the upkeep schedule
 ```

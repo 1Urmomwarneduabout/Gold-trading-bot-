@@ -8,12 +8,11 @@ have had.
 
 from dataclasses import asdict, dataclass, field
 
-import numpy as np
 import pandas as pd
 
 from .metrics import compute_metrics
 from .risk import RiskConfig, RiskGuard, position_size
-from .strategy import StrategyConfig, compute_signals
+from .strategy import StrategyConfig, compute_signals, decide
 
 
 @dataclass(frozen=True)
@@ -174,15 +173,12 @@ def run_backtest(
 
         # 4. Decide tomorrow's order from today's close.
         if i < last:
-            if pos is not None and guard.halted:
-                pending = ("exit", "risk_halt")
-            elif pos is not None and ((pos.side == 1 and long_exit[i]) or (pos.side == -1 and short_exit[i])):
-                pending = ("exit", "channel_exit")
-            elif pos is None and guard.can_open(equity) and not np.isnan(atr_v[i]):
-                if long_entry[i]:
-                    pending = ("enter", 1, atr_v[i])
-                elif short_entry[i]:
-                    pending = ("enter", -1, atr_v[i])
+            row = {"long_entry": long_entry[i], "short_entry": short_entry[i], "long_exit": long_exit[i], "short_exit": short_exit[i], "atr": atr_v[i]}
+            action = decide(pos.side if pos is not None else 0, row, guard.halted, guard.can_open(equity))
+            if action is not None and action.kind == "exit":
+                pending = ("exit", action.reason)
+            elif action is not None:
+                pending = ("enter", action.side, atr_v[i])
         elif pos is not None:
             close_position(pos, c[i] - pos.side * half, date, "end_of_data")
             pos = None

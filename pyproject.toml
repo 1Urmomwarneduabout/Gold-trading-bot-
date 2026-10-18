@@ -6,11 +6,12 @@ build-backend = "setuptools.build_meta"
 name = "goldbot"
 version = "0.1.0"
 description = "Gold (XAUUSD) trend-following backtester with walk-forward and Monte Carlo validation"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["pandas>=2.1", "numpy>=1.26"]
 
 [project.optional-dependencies]
 plot = ["matplotlib>=3.8"]
+mt5 = ["MetaTrader5>=5.0.45; sys_platform == 'win32'"]
 dev = ["pytest>=8"]
 
 [project.scripts]

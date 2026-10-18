@@ -10,6 +10,8 @@ Rules, evaluated on each daily close and executed at the next open:
   * Protective stop at `stop_atr` x ATR from the fill price, checked intraday.
 """
 
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import pandas as pd
@@ -48,3 +50,27 @@ def compute_signals(df: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
     out["long_exit"] = close < exit_low
     out["short_exit"] = close > exit_high
     return out
+
+
+@dataclass(frozen=True)
+class Action:
+    kind: str  # "enter" or "exit"
+    side: int = 0  # for entries: +1 long, -1 short
+    reason: str = ""
+
+
+def decide(position_side: int, signal: Mapping, halted: bool, can_open: bool) -> Action | None:
+    """What to do after a daily close. Shared by the backtester and the live bot.
+
+    `position_side` is +1, -1 or 0 (flat); `signal` is one row of compute_signals.
+    """
+    if position_side and halted:
+        return Action("exit", reason="risk_halt")
+    if (position_side == 1 and signal["long_exit"]) or (position_side == -1 and signal["short_exit"]):
+        return Action("exit", reason="channel_exit")
+    if position_side == 0 and can_open and not math.isnan(signal["atr"]):
+        if signal["long_entry"]:
+            return Action("enter", side=1)
+        if signal["short_entry"]:
+            return Action("enter", side=-1)
+    return None
