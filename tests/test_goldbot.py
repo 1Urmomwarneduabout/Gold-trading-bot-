@@ -237,3 +237,27 @@ def test_monte_carlo_is_reproducible_and_ordered():
     assert a["return_p5"] <= a["return_p50"] <= a["return_p95"]
     assert a["max_dd_p99"] <= a["max_dd_p95"] <= a["max_dd_p50"] <= 0
     assert not math.isnan(a["prob_loss"])
+
+
+# --- trailing stop ----------------------------------------------------------
+
+
+def test_trailed_stop_only_tightens():
+    from goldbot.strategy import trailed_stop
+
+    assert trailed_stop(1, 95.0, 110.0, 2.0, 3.0) == 104.0  # long: pulled up to close - 3 ATR
+    assert trailed_stop(1, 105.0, 110.0, 2.0, 3.0) == 105.0  # never loosened
+    assert trailed_stop(-1, 120.0, 110.0, 2.0, 3.0) == 116.0  # short: pulled down
+    assert trailed_stop(-1, 115.0, 110.0, 2.0, 3.0) == 115.0
+    assert trailed_stop(1, 95.0, 110.0, 2.0, 0.0) == 95.0  # off
+    assert trailed_stop(1, 95.0, 110.0, float("nan"), 3.0) == 95.0
+
+
+def test_trailing_stop_locks_in_rally_gains():
+    df = from_closes(BREAKOUT)
+    fixed = run_backtest(df, SMALL, NO_COSTS, BIG_ACCOUNT).trades.iloc[0]
+    trailed = run_backtest(df, StrategyConfig(**{**SMALL.__dict__, "trail_atr": 1.0}), NO_COSTS, BIG_ACCOUNT).trades.iloc[0]
+    assert fixed.exit_reason == "channel_exit"
+    assert trailed.exit_reason == "stop"
+    assert trailed.stop > fixed.stop
+    assert trailed.exit_price > fixed.exit_price

@@ -338,3 +338,60 @@ def test_mt5_rejected_order_raises():
 
 def test_mt5_demo_account_detected():
     assert MT5Broker(fake_mt5()).account().is_real is False
+
+
+# --- trailing stop ------------------------------------------------------------------
+
+
+def make_trailing(tmp_path, broker, trail_atr=1.0, **cfg):
+    live = LiveConfig(state_dir=str(tmp_path / "state"), **cfg)
+    return LiveTrader(broker, live, replace(SMALL, trail_atr=trail_atr), RiskConfig(), RecordingNotifier())
+
+
+def test_trailing_stop_ratchets_server_stop(tmp_path):
+    broker = entry_broker()
+    trader = make_trailing(tmp_path, broker)
+    trader.run_once()
+    entry_sl = broker.orders[0]["sl"]
+    for _ in range(3):  # bars 7..9 keep rallying
+        broker.next_bar()
+        assert "trailed stop" in trader.run_once()
+    sls = [sl for _, sl in broker.stops]
+    assert len(sls) == 3 and entry_sl < sls[0] < sls[1] < sls[2]
+    assert broker.open_positions[0].sl == sls[-1]
+    assert load_state(trader.cfg.state_file).position.sl == sls[-1]
+    assert "trail_stop" in trader.cfg.journal_file.read_text()
+
+
+def test_trailing_stop_never_loosens(tmp_path):
+    broker = entry_broker()
+    trader = make_trailing(tmp_path, broker)
+    trader.run_once()
+    broker.next_bar()
+    trader.run_once()
+    tightened = load_state(trader.cfg.state_file).position.sl
+    trader.strategy = replace(trader.strategy, trail_atr=50.0)  # would put the stop far below
+    broker.next_bar()
+    trader.run_once()
+    assert load_state(trader.cfg.state_file).position.sl == tightened
+    assert len(broker.stops) == 1
+
+
+def test_trailing_off_leaves_stop_alone(tmp_path):
+    broker = entry_broker()
+    trader = make(tmp_path, broker)
+    trader.run_once()
+    for _ in range(3):
+        broker.next_bar()
+        trader.run_once()
+    assert broker.stops == []
+
+
+def test_trailing_dry_run_sends_nothing(tmp_path):
+    broker = entry_broker()
+    trader = make_trailing(tmp_path, broker)
+    trader.run_once()
+    trader.cfg = replace(trader.cfg, dry_run=True)
+    broker.next_bar()
+    assert "DRY RUN: would trail" in trader.run_once()
+    assert broker.stops == []

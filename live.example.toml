@@ -24,6 +24,7 @@ trend_lookback = 200
 atr_lookback = 20
 stop_atr = 2.0
 allow_short = true
+trail_atr = 0.0                # trailing stop in ATRs behind the close; 0 = off (try 3.0 in a backtest first)
 
 [risk]
 risk_per_trade = 0.01

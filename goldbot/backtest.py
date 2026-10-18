@@ -12,7 +12,7 @@ import pandas as pd
 
 from .metrics import compute_metrics
 from .risk import RiskConfig, RiskGuard, position_size
-from .strategy import StrategyConfig, compute_signals, decide
+from .strategy import StrategyConfig, compute_signals, decide, trailed_stop
 
 
 @dataclass(frozen=True)
@@ -173,6 +173,8 @@ def run_backtest(
 
         # 4. Decide tomorrow's order from today's close.
         if i < last:
+            if pos is not None:  # trailing stop, enforced from tomorrow's bar
+                pos.stop = trailed_stop(pos.side, pos.stop, c[i], atr_v[i], strategy.trail_atr)
             row = {"long_entry": long_entry[i], "short_entry": short_entry[i], "long_exit": long_exit[i], "short_exit": short_exit[i], "atr": atr_v[i]}
             action = decide(pos.side if pos is not None else 0, row, guard.halted, guard.can_open(equity))
             if action is not None and action.kind == "exit":

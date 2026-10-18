@@ -18,7 +18,7 @@ from .broker import Account, Broker, BrokerError, Position, SymbolSpec, Tick
 from .notify import Notifier, ping
 from .risk import RiskConfig, RiskGuard, position_size
 from .state import BotState, OpenTrade, journal, load_state, save_state
-from .strategy import StrategyConfig, compute_signals, decide
+from .strategy import StrategyConfig, compute_signals, decide, trailed_stop
 
 log = logging.getLogger("goldbot")
 
@@ -162,6 +162,11 @@ class LiveTrader:
         else:
             outcome = self._enter(state, action.side, float(signal["atr"]), spec, tick, account, bar)
 
+        if position is not None and state.position is not None and (action is None or action.kind != "exit"):
+            trail = self._trail(state, position, float(bars["close"].iloc[-1]), float(signal["atr"]), spec, tick)
+            if trail:
+                outcome = f"{outcome}; {trail}"
+
         state.last_bar = bar
         state.day_start_equity = account.equity
         save_state(cfg.state_file, state)
@@ -244,6 +249,26 @@ class LiveTrader:
         state.position = OpenTrade(ticket=ticket, side=side, volume=fill.volume, entry_price=fill.price, sl=sl, opened_at=_now(), signal_bar=bar)
         journal(cfg.journal_file, time=_now(), event="entry", side=side, lots=fill.volume, price=fill.price, sl=sl, equity=account.equity, note=bar)
         msg = f"opened {word} {fill.volume} lots at {fill.price:.2f}, stop {sl:.2f} (risk about {fill.volume * spec.contract_size * stop_distance:,.0f})"
+        self.notify.send(msg)
+        return msg
+
+    def _trail(self, state: BotState, position: Position, close: float, atr: float, spec: SymbolSpec, tick: Tick) -> str:
+        """Tighten the server-side stop per the trailing rule. Returns a note, or "" if unchanged."""
+        cfg, trade = self.cfg, state.position
+        sl = round(trailed_stop(trade.side, trade.sl, close, atr, self.strategy.trail_atr), spec.digits)
+        if (sl - trade.sl) * trade.side < spec.point:  # not tighter by at least one point
+            return ""
+        price = tick.bid if trade.side == 1 else tick.ask
+        if (price - sl) * trade.side < spec.stops_level * spec.point:
+            log.warning("Trailing stop %.2f is inside the broker's minimum distance from %.2f; keeping %.2f", sl, price, trade.sl)
+            return ""
+        if cfg.dry_run:
+            journal(cfg.journal_file, time=_now(), event="dry_run_trail", side=trade.side, lots=trade.volume, price=price, sl=sl, note=f"from {trade.sl:.2f}")
+            return f"DRY RUN: would trail stop {trade.sl:.2f} -> {sl:.2f}"
+        self.broker.set_stop(cfg.symbol, position, sl)
+        journal(cfg.journal_file, time=_now(), event="trail_stop", side=trade.side, lots=trade.volume, price=price, sl=sl, note=f"from {trade.sl:.2f}")
+        msg = f"trailed stop {trade.sl:.2f} -> {sl:.2f}"
+        trade.sl = sl
         self.notify.send(msg)
         return msg
 

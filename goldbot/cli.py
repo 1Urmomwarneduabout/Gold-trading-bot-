@@ -30,6 +30,7 @@ def _add_config_args(p: argparse.ArgumentParser) -> None:
     s.add_argument("--atr", type=int, default=20, help="ATR length (default 20)")
     s.add_argument("--stop-atr", type=float, default=2.0, help="stop distance in ATRs (default 2)")
     s.add_argument("--long-only", action="store_true", help="disable short trades")
+    s.add_argument("--trail-atr", type=float, default=0.0, help="trail the stop this many ATRs behind the close (default 0 = off)")
 
     c = p.add_argument_group("costs (set these from your broker)")
     c.add_argument("--spread", type=float, default=0.40, help="full spread, USD/oz (default 0.40)")
@@ -49,7 +50,7 @@ def _add_config_args(p: argparse.ArgumentParser) -> None:
 
 def _configs(a: argparse.Namespace) -> tuple[StrategyConfig, CostConfig, RiskConfig]:
     return (
-        StrategyConfig(a.entry, a.exit, a.trend, a.atr, a.stop_atr, not a.long_only),
+        StrategyConfig(a.entry, a.exit, a.trend, a.atr, a.stop_atr, not a.long_only, a.trail_atr),
         CostConfig(a.spread, a.slippage, a.commission, a.swap_long, a.swap_short),
         RiskConfig(a.risk, a.max_leverage, a.lot_step, a.max_daily_loss, a.max_drawdown),
     )
