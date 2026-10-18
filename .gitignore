@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# Price data and backtest output stay local
+data/
+results/
+
+# Never commit broker credentials
+.env
+*.key
