@@ -1,9 +1,10 @@
-"""Daily-bar backtester with realistic gold trading costs.
+"""Bar-by-bar backtester with realistic gold trading costs.
 
 Prices are treated as mid prices. Buys fill at mid + half spread + slippage,
-sells at mid - half spread - slippage. Signals come from the daily close and
+sells at mid - half spread - slippage. Signals come from a bar's close and
 fill at the next bar's open, so a trade never uses information it could not
-have had.
+have had. Works on daily or intraday bars: overnight swap and the daily loss
+limit follow the trading day, which rolls at `roll_hour_utc`.
 """
 
 from dataclasses import asdict, dataclass, field
@@ -80,14 +81,17 @@ def run_backtest(
     initial_equity: float = 10_000.0,
     start: pd.Timestamp | str | None = None,
     end: pd.Timestamp | str | None = None,
+    roll_hour_utc: int = 22,
 ) -> BacktestResult:
-    """Run the strategy over daily OHLC bars.
+    """Run the strategy over OHLC bars (daily or intraday).
 
     Indicators use all bars up to `end`, so passing an earlier `start` only
     limits when trading may happen; it never shortens indicator history.
     """
     signals = compute_signals(df, strategy)
     idx = df.index
+    # Trading day of each bar. Daily bars stamped at midnight keep their own date.
+    day = (idx + pd.Timedelta(hours=(24 - roll_hour_utc) % 24)).floor("D")
     o, h, l, c = (df[col].to_numpy(float) for col in ("open", "high", "low", "close"))
     atr_v = signals["atr"].to_numpy(float)
     long_entry, short_entry = signals["long_entry"].to_numpy(), signals["short_entry"].to_numpy()
@@ -121,7 +125,8 @@ def run_backtest(
 
     for i in range(first, last + 1):
         date = idx[i]
-        guard.start_day(equity)
+        if i == first or day[i] != day[i - 1]:
+            guard.start_day(equity)
 
         # 1. Fill yesterday's order at today's open.
         if pending is not None:
@@ -158,9 +163,9 @@ def run_backtest(
                 close_position(pos, max(o[i], pos.stop) + half, date, "stop")
                 pos = None
 
-        # 3. Overnight financing for positions carried past today's close.
-        if pos is not None and i < last:
-            nights = (idx[i + 1] - date).days
+        # 3. Overnight financing for positions carried past the daily rollover.
+        nights = (day[i + 1] - day[i]).days if i < last else 0
+        if pos is not None and nights > 0:
             rate = costs.swap_long_annual if pos.side == 1 else costs.swap_short_annual
             swap = c[i] * pos.units * rate / 365 * nights
             cash -= swap

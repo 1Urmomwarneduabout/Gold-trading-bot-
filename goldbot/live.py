@@ -1,6 +1,6 @@
 """The live/paper trading loop.
 
-Once per completed daily bar, the bot runs the same `compute_signals`,
+Once per completed bar (daily by default, or H4/H1), the bot runs the same `compute_signals`,
 `decide` and `position_size` code as the backtester. Every position carries
 a stop-loss held on the broker's server, so it is protected even if this
 program or the VPS goes down.
@@ -31,6 +31,7 @@ class SafetyError(RuntimeError):
 class LiveConfig:
     symbol: str = "XAUUSD"
     magic: int = 7861001  # tags this bot's orders so it ignores your manual trades
+    timeframe: str = "D1"  # bar size the strategy runs on: D1, H4 or H1
     history_bars: int = 400
     wait_after_open_minutes: int = 60  # spreads are widest right after the daily rollover
     max_spread: float = 1.0  # USD per oz; don't trade while the spread is wider
@@ -122,11 +123,11 @@ class LiveTrader:
             save_state(cfg.state_file, state)
             return f"halted: {state.halt_reason}. Run 'goldbot live reset-halt' after reviewing."
 
-        bars = broker.daily_bars(cfg.symbol, cfg.history_bars)
+        bars = broker.price_bars(cfg.symbol, cfg.history_bars, cfg.timeframe)
         if len(bars) < self.strategy.warmup:
             raise BrokerError(
-                f"Only {len(bars)} daily bars available, need {self.strategy.warmup}. "
-                "Scroll the D1 chart back or raise 'Max bars in chart' in MT5 options."
+                f"Only {len(bars)} {cfg.timeframe} bars available, need {self.strategy.warmup}. "
+                f"Scroll the {cfg.timeframe} chart back or raise 'Max bars in chart' in MT5 options."
             )
         bar = bars.index[-1].isoformat()
         if state.last_bar == bar:
@@ -134,7 +135,7 @@ class LiveTrader:
             return "up to date"
 
         tick = broker.tick(cfg.symbol)
-        since_open = tick.time - broker.current_bar_open(cfg.symbol)
+        since_open = tick.time - broker.current_bar_open(cfg.symbol, cfg.timeframe)
         if since_open < timedelta(minutes=cfg.wait_after_open_minutes):
             save_state(cfg.state_file, state)
             return f"new bar {bar}: waiting {cfg.wait_after_open_minutes} min after the open for spreads to settle"
@@ -168,13 +169,24 @@ class LiveTrader:
                 outcome = f"{outcome}; {trail}"
 
         state.last_bar = bar
-        state.day_start_equity = account.equity
+        # The daily loss limit compares against equity at the first decision of the previous
+        # trading day; with daily bars that is simply the previous decision.
+        trading_day = bars.index[-1].date().isoformat()
+        if state.trading_day != trading_day:
+            state.day_start_equity = account.equity
+            state.trading_day = trading_day
         save_state(cfg.state_file, state)
         held = f"{'long' if state.position.side == 1 else 'short'} {state.position.volume} lots" if state.position else "flat"
-        self.notify.send(
-            f"Daily check {bar[:10]}: {outcome}. Position: {held}. Equity {account.equity:,.2f} {account.currency}. "
+        daily = cfg.timeframe == "D1"
+        summary = (
+            f"{'Daily' if daily else cfg.timeframe} check {bar[:10] if daily else bar[:16]}: {outcome}. Position: {held}. "
+            f"Equity {account.equity:,.2f} {account.currency}. "
             f"Close {bars['close'].iloc[-1]:.2f}, trend SMA {signal['trend']:.2f}, ATR {signal['atr']:.2f}."
         )
+        if daily or action is not None:
+            self.notify.send(summary)
+        else:  # intraday bots log quiet bars instead of sending an alert every hour
+            log.info(summary)
         return outcome
 
     # --- helpers ----------------------------------------------------------------

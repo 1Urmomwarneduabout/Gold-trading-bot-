@@ -76,12 +76,12 @@ class Broker(Protocol):
 
     def tick(self, symbol: str) -> Tick: ...
 
-    def daily_bars(self, symbol: str, count: int) -> pd.DataFrame:
-        """Completed daily bars only (the forming bar excluded), oldest first."""
+    def price_bars(self, symbol: str, count: int, timeframe: str = "D1") -> pd.DataFrame:
+        """Completed bars only (the forming bar excluded), oldest first. timeframe: D1, H4 or H1."""
         ...
 
-    def current_bar_open(self, symbol: str) -> pd.Timestamp:
-        """Server time at which today's (still forming) daily bar opened."""
+    def current_bar_open(self, symbol: str, timeframe: str = "D1") -> pd.Timestamp:
+        """Server time at which the still-forming bar of `timeframe` opened."""
         ...
 
     def positions(self, symbol: str) -> list[Position]: ...

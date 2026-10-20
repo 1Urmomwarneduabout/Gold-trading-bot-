@@ -101,21 +101,24 @@ class MT5Broker:
         t = self._check(self.mt5.symbol_info_tick(symbol), "symbol_info_tick")
         return Tick(time=pd.Timestamp(t.time, unit="s"), bid=float(t.bid), ask=float(t.ask))
 
-    def _rates(self, symbol: str, start_pos: int, count: int) -> pd.DataFrame:
-        rates = self.mt5.copy_rates_from_pos(symbol, self.mt5.TIMEFRAME_D1, start_pos, count)
+    def _rates(self, symbol: str, timeframe: str, start_pos: int, count: int) -> pd.DataFrame:
+        frames = {"D1": self.mt5.TIMEFRAME_D1, "H4": self.mt5.TIMEFRAME_H4, "H1": self.mt5.TIMEFRAME_H1}
+        if timeframe not in frames:
+            raise BrokerError(f"Unknown timeframe {timeframe!r}; use D1, H4 or H1")
+        rates = self.mt5.copy_rates_from_pos(symbol, frames[timeframe], start_pos, count)
         if rates is None or len(rates) == 0:
-            raise BrokerError(f"No daily bars for {symbol}: {self.mt5.last_error()}")
+            raise BrokerError(f"No {timeframe} bars for {symbol}: {self.mt5.last_error()}")
         df = pd.DataFrame(rates)
         # MT5 bar times are broker server time, which most brokers set so that
         # the daily bar closes at 17:00 New York, matching gold's trading day.
         df.index = pd.DatetimeIndex(pd.to_datetime(df["time"], unit="s"), name="time")
         return df.rename(columns={"tick_volume": "volume"})[["open", "high", "low", "close", "volume"]]
 
-    def daily_bars(self, symbol: str, count: int) -> pd.DataFrame:
-        return self._rates(symbol, 1, count)  # position 0 is the bar still forming
+    def price_bars(self, symbol: str, count: int, timeframe: str = "D1") -> pd.DataFrame:
+        return self._rates(symbol, timeframe, 1, count)  # position 0 is the bar still forming
 
-    def current_bar_open(self, symbol: str) -> pd.Timestamp:
-        return self._rates(symbol, 0, 1).index[-1]
+    def current_bar_open(self, symbol: str, timeframe: str = "D1") -> pd.Timestamp:
+        return self._rates(symbol, timeframe, 0, 1).index[-1]
 
     def positions(self, symbol: str) -> list[Position]:
         raw = self.mt5.positions_get(symbol=symbol)

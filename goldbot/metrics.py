@@ -14,7 +14,10 @@ def max_drawdown(equity: pd.Series) -> float:
 
 def compute_metrics(equity: pd.Series, trades: pd.DataFrame) -> dict:
     nan = float("nan")
-    rets = equity.pct_change().dropna()
+    # Volatility and Sharpe are annualised from daily returns, so sample intraday curves once a day.
+    intraday = len(equity) > 1 and equity.index.to_series().diff().median() < pd.Timedelta(hours=20)
+    daily = equity.groupby(equity.index.floor("D")).last() if intraday else equity
+    rets = daily.pct_change().dropna()
     years = (equity.index[-1] - equity.index[0]).days / 365.25
     total_return = equity.iloc[-1] / equity.iloc[0] - 1
     cagr = (1 + total_return) ** (1 / years) - 1 if years > 0 and total_return > -1 else nan

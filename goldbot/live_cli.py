@@ -37,7 +37,7 @@ def cmd_check(a: argparse.Namespace) -> None:
         acct = broker.account()
         spec = broker.symbol_spec(live_cfg.symbol)
         tick = broker.tick(live_cfg.symbol)
-        bars = broker.daily_bars(live_cfg.symbol, live_cfg.history_bars)
+        bars = broker.price_bars(live_cfg.symbol, live_cfg.history_bars, live_cfg.timeframe)
         positions = broker.positions(live_cfg.symbol)
         state = load_state(live_cfg.state_file)
 
@@ -47,12 +47,12 @@ def cmd_check(a: argparse.Namespace) -> None:
         print(f"Symbol    {spec.name}  {spec.contract_size:g} oz/lot  volume min {spec.volume_min} step {spec.volume_step} max {spec.volume_max}")
         print(f"          digits {spec.digits}  min stop distance {spec.stops_level} points  swap long {spec.swap_long} short {spec.swap_short} (broker units)")
         print(f"Price     bid {tick.bid}  ask {tick.ask}  spread {tick.spread:.2f}  server time {tick.time}")
-        print(f"History   {len(bars)} completed daily bars, {bars.index[0].date()} to {bars.index[-1].date()} (need {strategy.warmup})")
+        print(f"History   {len(bars)} completed {live_cfg.timeframe} bars, {bars.index[0]} to {bars.index[-1]} (need {strategy.warmup})")
 
         if len(bars) >= strategy.warmup:
             sig = compute_signals(bars, strategy).iloc[-1]
             flags = [k for k in ("long_entry", "short_entry", "long_exit", "short_exit") if sig[k]]
-            print(f"Strategy  last close {bars['close'].iloc[-1]:.2f}  trend SMA {sig['trend']:.2f}  ATR {sig['atr']:.2f}  signals: {', '.join(flags) or 'none'}")
+            print(f"Strategy  {strategy.kind}  last close {bars['close'].iloc[-1]:.2f}  trend SMA {sig['trend']:.2f}  ATR {sig['atr']:.2f}  signals: {', '.join(flags) or 'none'}")
             stop = strategy.stop_atr * sig["atr"]
             lots = lots_for(acct.equity, tick.ask, stop, spec, risk)
             if lots:
@@ -74,7 +74,7 @@ def cmd_run(a: argparse.Namespace) -> None:
         live_cfg = replace(live_cfg, dry_run=True)
     _setup_logging(live_cfg.state_dir)
     broker = _connect(live_cfg)
-    trader = LiveTrader(broker, live_cfg, strategy, risk, Notifier.from_env())
+    trader = LiveTrader(broker, live_cfg, strategy, risk, Notifier.from_env(_alert_prefix(live_cfg)))
     try:
         if a.once:
             print(trader.run_once())
@@ -97,12 +97,54 @@ def cmd_export(a: argparse.Namespace) -> None:
     live_cfg, _, _ = load_config(a.config)
     broker = _connect(live_cfg)
     try:
-        bars = broker.daily_bars(live_cfg.symbol, a.bars)
+        timeframe = a.timeframe or live_cfg.timeframe
+        bars = broker.price_bars(live_cfg.symbol, a.bars, timeframe)
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         bars.to_csv(a.out)
-        print(f"Wrote {len(bars):,} daily bars ({bars.index[0].date()} to {bars.index[-1].date()}) to {a.out}")
+        print(f"Wrote {len(bars):,} {timeframe} bars ({bars.index[0]} to {bars.index[-1]}, broker server time) to {a.out}")
     finally:
         broker.shutdown()
+
+
+def _alert_prefix(live_cfg) -> str:
+    """Label on Telegram alerts, so two bots on one chat can be told apart."""
+    return "goldbot" if live_cfg.timeframe == "D1" else f"goldbot {live_cfg.timeframe}"
+
+
+def cmd_telegram_test(a: argparse.Namespace) -> None:
+    import json
+    import urllib.request
+
+    live_cfg, _, _ = load_config(a.config)
+    from .notify import _setting
+
+    token, chat_id = _setting("TELEGRAM_BOT_TOKEN"), _setting("TELEGRAM_CHAT_ID")
+    if not token:
+        print("TELEGRAM_BOT_TOKEN is not set. Create a bot with @BotFather, then run:\n"
+              '  setx TELEGRAM_BOT_TOKEN "<token>"\nand open a new PowerShell window.')
+        return
+    api = f"https://api.telegram.org/bot{token}"
+    if not chat_id:
+        with urllib.request.urlopen(f"{api}/getUpdates", timeout=10) as r:
+            updates = json.load(r).get("result", [])
+        chats = {}
+        for u in updates:
+            chat = (u.get("message") or u.get("channel_post") or {}).get("chat")
+            if chat:
+                chats[chat["id"]] = chat.get("username") or chat.get("title") or chat.get("first_name", "")
+        if not chats:
+            print("No messages found. Send your bot any message in Telegram (e.g. 'hi'), then run this again.")
+            return
+        for cid, name in chats.items():
+            print(f"Chat {cid} ({name})")
+        first = next(iter(chats))
+        print(f'\nTo use it, run:\n  setx TELEGRAM_CHAT_ID "{first}"\nthen open a new PowerShell window and run this command again.')
+        return
+    body = json.dumps({"chat_id": chat_id, "text": f"[{_alert_prefix(live_cfg)}] Test alert: Telegram is working."}).encode()
+    request = urllib.request.Request(f"{api}/sendMessage", data=body, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=10) as r:
+        ok = json.load(r).get("ok")
+    print("Test message sent; check Telegram." if ok else "Telegram did not accept the message; check the token and chat ID.")
 
 
 def add_live_commands(sub) -> None:
@@ -120,6 +162,8 @@ def add_live_commands(sub) -> None:
     p.add_argument("--once", action="store_true", help="do a single pass and exit")
     p.add_argument("--dry-run", action="store_true", help="log orders instead of sending them")
     command("reset-halt", cmd_reset_halt, "clear the kill switch after reviewing what happened")
-    p = command("export-history", cmd_export, "save the broker's daily bars to CSV for backtesting")
-    p.add_argument("--bars", type=int, default=5000)
+    command("telegram-test", cmd_telegram_test, "find your Telegram chat ID, or send a test alert")
+    p = command("export-history", cmd_export, "save the broker's price bars to CSV for backtesting")
+    p.add_argument("--bars", type=int, default=5000, help="how many bars (MT5 caps this at 'Max bars in chart')")
+    p.add_argument("--timeframe", choices=["D1", "H4", "H1"], help="bar size (default: the config's timeframe)")
     p.add_argument("--out", default="data/broker_d1.csv")

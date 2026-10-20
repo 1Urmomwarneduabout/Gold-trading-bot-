@@ -3,6 +3,7 @@
 import csv
 import json
 import os
+import time
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
@@ -22,7 +23,8 @@ class OpenTrade:
 class BotState:
     last_bar: str | None = None  # last daily bar the bot has acted on
     equity_peak: float | None = None
-    day_start_equity: float | None = None  # equity at the previous daily decision
+    day_start_equity: float | None = None  # equity at the first decision of the last trading day
+    trading_day: str | None = None  # trading day that day_start_equity belongs to
     halted: bool = False
     halt_reason: str = ""
     position: OpenTrade | None = None
@@ -46,7 +48,16 @@ def save_state(path: str | Path, state: BotState) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(asdict(state), indent=2))
-    os.replace(tmp, path)
+    # Windows refuses the replace while another program (an editor, antivirus, a status
+    # check) has the file open; that lasts moments, so retry briefly before giving up.
+    for attempt in range(10):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 9:
+                raise
+            time.sleep(0.2)
 
 
 JOURNAL_FIELDS = ["time", "event", "side", "lots", "price", "sl", "equity", "note"]

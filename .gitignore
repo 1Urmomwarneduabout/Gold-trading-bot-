@@ -12,4 +12,6 @@ results/
 .env
 *.key
 live.toml
+live_h1.toml
 state/
+state_h1/

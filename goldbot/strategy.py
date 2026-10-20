@@ -1,5 +1,8 @@
-"""Donchian channel breakout with a long-term trend filter.
+"""Trading rules shared by the backtester and the live bot.
 
+Two strategies, picked with `kind`:
+
+"donchian" (default): channel breakout with a long-term trend filter.
 Rules, evaluated on each daily close and executed at the next open:
   * Go long when the close breaks above the highest high of the last
     `entry_lookback` days AND the close is above its `trend_lookback` SMA.
@@ -11,6 +14,17 @@ Rules, evaluated on each daily close and executed at the next open:
   * Optional trailing stop: after each daily close, pull the stop up to
     `trail_atr` x ATR behind the close (down, for shorts). It only ever
     tightens. `trail_atr = 0` turns it off.
+
+"ma_cross": moving-average crossover, meant for intraday bars (e.g. 1-hour).
+  * Go long when the `fast_ma` SMA crosses above the `slow_ma` SMA, short on
+    the mirror image. An entry stays valid for `cross_window` bars after the
+    cross, so a reversal can still be taken on the bar after the exit fills.
+  * Exit when the fast SMA is back on the wrong side of the slow one.
+  * Optional trend filter: only trade in the direction of the
+    `trend_lookback` SMA; `trend_lookback = 0` turns it off.
+  * Same ATR stop and optional trailing stop as "donchian".
+
+Lookbacks count bars of whatever timeframe the data has, not days.
 """
 
 import math
@@ -31,14 +45,28 @@ class StrategyConfig:
     stop_atr: float = 2.0
     allow_short: bool = True
     trail_atr: float = 0.0  # 0 = fixed stop; e.g. 3.0 trails the stop 3 ATRs behind the close
+    kind: str = "donchian"  # or "ma_cross"
+    fast_ma: int = 20  # ma_cross only
+    slow_ma: int = 50  # ma_cross only
+    cross_window: int = 2  # ma_cross only: bars after a cross during which an entry is still taken
+
+    def __post_init__(self):
+        if self.kind not in ("donchian", "ma_cross"):
+            raise ValueError(f"Unknown strategy kind {self.kind!r}; use 'donchian' or 'ma_cross'")
+        if self.kind == "ma_cross" and not 0 < self.fast_ma < self.slow_ma:
+            raise ValueError("ma_cross needs 0 < fast_ma < slow_ma")
 
     @property
     def warmup(self) -> int:
         """Bars needed before every indicator has a value."""
+        if self.kind == "ma_cross":
+            return max(self.slow_ma + self.cross_window, self.trend_lookback, self.atr_lookback) + 1
         return max(self.entry_lookback, self.exit_lookback, self.trend_lookback, self.atr_lookback) + 1
 
 
 def compute_signals(df: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
+    if cfg.kind == "ma_cross":
+        return _ma_cross_signals(df, cfg)
     close = df["close"]
     out = pd.DataFrame(index=df.index)
     out["trend"] = sma(close, cfg.trend_lookback)
@@ -53,6 +81,28 @@ def compute_signals(df: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
     out["short_entry"] = (close < entry_low) & (close < out["trend"]) & cfg.allow_short
     out["long_exit"] = close < exit_low
     out["short_exit"] = close > exit_high
+    return out
+
+
+def _ma_cross_signals(df: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
+    close = df["close"]
+    out = pd.DataFrame(index=df.index)
+    out["trend"] = sma(close, cfg.trend_lookback) if cfg.trend_lookback > 0 else float("nan")
+    out["atr"] = atr(df, cfg.atr_lookback)
+    fast, slow = sma(close, cfg.fast_ma), sma(close, cfg.slow_ma)
+    above, below = fast > slow, fast < slow  # both False while either SMA is NaN
+    crossed_up = above & (fast.shift(1) <= slow.shift(1))  # NaN history never counts as a cross
+    crossed_down = below & (fast.shift(1) >= slow.shift(1))
+    recent_up = crossed_up.astype(int).rolling(cfg.cross_window, min_periods=1).max().astype(bool)
+    recent_down = crossed_down.astype(int).rolling(cfg.cross_window, min_periods=1).max().astype(bool)
+    if cfg.trend_lookback > 0:
+        with_trend_up, with_trend_down = close > out["trend"], close < out["trend"]
+    else:
+        with_trend_up = with_trend_down = True
+    out["long_entry"] = recent_up & above & with_trend_up
+    out["short_entry"] = recent_down & below & with_trend_down & cfg.allow_short
+    out["long_exit"] = ~above & slow.notna()
+    out["short_exit"] = ~below & slow.notna()
     return out
 
 

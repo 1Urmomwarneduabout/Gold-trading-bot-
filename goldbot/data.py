@@ -107,6 +107,32 @@ def load_daily(path: str, roll_hour_utc: int = 22) -> pd.DataFrame:
     return to_daily(df, roll_hour_utc) if is_intraday(df) else df
 
 
+TIMEFRAME_HOURS = {"H1": 1, "H4": 4}
+
+
+def to_hours(df: pd.DataFrame, hours: int) -> pd.DataFrame:
+    """Resample intraday bars to `hours`-hour bars aligned to midnight of the file's clock."""
+    agg = {"open": "first", "high": "max", "low": "min", "close": "last"}
+    if "volume" in df:
+        agg["volume"] = "sum"
+    out = df.groupby(df.index.floor(f"{hours}h")).agg(agg)
+    out.index.name = "time"
+    return out
+
+
+def load_bars(path: str, timeframe: str = "D1", roll_hour_utc: int = 22) -> pd.DataFrame:
+    """Load a CSV as bars of `timeframe`: D1 (daily), H4 or H1."""
+    if timeframe == "D1":
+        return load_daily(path, roll_hour_utc)
+    if timeframe not in TIMEFRAME_HOURS:
+        raise ValueError(f"Unknown timeframe {timeframe!r}; use D1, H4 or H1")
+    df = load_ohlc(path)
+    step = df.index.to_series().diff().median()
+    if step > pd.Timedelta(hours=TIMEFRAME_HOURS[timeframe]):
+        raise ValueError(f"{path} has bars about {step} apart, too coarse for {timeframe}")
+    return to_hours(df, TIMEFRAME_HOURS[timeframe])
+
+
 def synthetic_daily(n_days: int = 3000, seed: int = 42, start_price: float = 1800.0) -> pd.DataFrame:
     """SYNTHETIC random prices for tests and demos. Not real gold data.
 

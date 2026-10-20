@@ -12,9 +12,20 @@ from .risk import RiskConfig
 from .strategy import StrategyConfig
 
 
-def _combos(grid: dict[str, list]) -> list[dict]:
+def _combos(grid: dict[str, list], base: StrategyConfig | None = None) -> list[dict]:
+    """Every combination in the grid, minus ones `base` rejects (e.g. fast_ma >= slow_ma)."""
     keys = list(grid)
-    return [dict(zip(keys, values)) for values in itertools.product(*grid.values())]
+    combos = [dict(zip(keys, values)) for values in itertools.product(*grid.values())]
+    if base is None:
+        return combos
+    valid = []
+    for combo in combos:
+        try:
+            replace(base, **combo)
+        except ValueError:
+            continue
+        valid.append(combo)
+    return valid
 
 
 def _score(result: BacktestResult, objective: str, min_trades: int) -> float:
@@ -38,7 +49,7 @@ def parameter_sweep(
     surrounded by losers means the "best" setting is luck.
     """
     rows = []
-    for combo in _combos(grid):
+    for combo in _combos(grid, base):
         result = run_backtest(df, replace(base, **combo), costs, risk, **kwargs)
         m = result.metrics
         rows.append({**combo, **{k: m[k] for k in ("cagr", "sharpe", "max_drawdown", "mar", "trades", "win_rate")}})
@@ -64,6 +75,7 @@ def walk_forward(
     objective: str = "mar",
     min_trades: int = 5,
     initial_equity: float = 10_000.0,
+    roll_hour_utc: int = 22,
 ) -> WalkForwardResult:
     """Optimise on a training window, trade the next unseen window, roll forward.
 
@@ -71,7 +83,7 @@ def walk_forward(
     curve, so the result is an honest estimate of trading the optimiser live.
     Positions are closed at the end of each test window.
     """
-    combos = _combos(grid)
+    combos = _combos(grid, base)
     warmup = max(replace(base, **combo).warmup for combo in combos)
     if len(df) <= warmup:
         raise ValueError("Not enough data for indicator warm-up.")
@@ -90,7 +102,7 @@ def walk_forward(
 
         best_combo, best_score = None, float("-inf")
         for combo in combos:
-            result = run_backtest(df, replace(base, **combo), costs, risk, start=train_start, end=train_end)
+            result = run_backtest(df, replace(base, **combo), costs, risk, start=train_start, end=train_end, roll_hour_utc=roll_hour_utc)
             score = _score(result, objective, min_trades)
             if score > best_score:
                 best_combo, best_score = combo, score
@@ -108,6 +120,7 @@ def walk_forward(
                     initial_equity=equity,
                     start=test_start,
                     end=test_end,
+                    roll_hour_utc=roll_hour_utc,
                 )
             except ValueError:  # too few bars left in the final window
                 break

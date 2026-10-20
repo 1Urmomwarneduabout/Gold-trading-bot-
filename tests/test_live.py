@@ -54,7 +54,7 @@ class FakeBroker:
     def symbol_spec(self, symbol):
         return SPEC
 
-    def current_bar_open(self, symbol):
+    def current_bar_open(self, symbol, timeframe="D1"):
         return self.bars.index[-1] + pd.offsets.BDay()
 
     def tick(self, symbol):
@@ -62,7 +62,7 @@ class FakeBroker:
         now = self.current_bar_open(symbol) + pd.Timedelta(minutes=self.minutes_since_open)
         return Tick(time=now, bid=mid - self.spread / 2, ask=mid + self.spread / 2)
 
-    def daily_bars(self, symbol, count):
+    def price_bars(self, symbol, count, timeframe="D1"):
         return self.bars.iloc[-count:]
 
     def positions(self, symbol):
@@ -395,3 +395,23 @@ def test_trailing_dry_run_sends_nothing(tmp_path):
     broker.next_bar()
     assert "DRY RUN: would trail" in trader.run_once()
     assert broker.stops == []
+
+
+def test_save_state_retries_while_file_is_locked(tmp_path, monkeypatch):
+    import os
+
+    from goldbot import state as state_mod
+
+    real_replace, calls = os.replace, []
+
+    def flaky_replace(src, dst):
+        calls.append(1)
+        if len(calls) < 3:
+            raise PermissionError("locked by another program")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(state_mod.os, "replace", flaky_replace)
+    monkeypatch.setattr(state_mod.time, "sleep", lambda s: None)
+    state_mod.save_state(tmp_path / "state.json", state_mod.BotState(last_bar="x"))
+    assert len(calls) == 3
+    assert load_state(tmp_path / "state.json").last_bar == "x"

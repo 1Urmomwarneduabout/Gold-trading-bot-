@@ -9,7 +9,7 @@ import pandas as pd
 
 from .backtest import CostConfig, run_backtest
 from .broker import BrokerError
-from .data import load_daily, synthetic_daily
+from .data import load_bars, load_daily, synthetic_daily
 from .live import SafetyError
 from .live_cli import add_live_commands
 from .metrics import format_metrics
@@ -24,6 +24,10 @@ def _int_list(text: str) -> list[int]:
 
 def _add_config_args(p: argparse.ArgumentParser) -> None:
     s = p.add_argument_group("strategy")
+    s.add_argument("--kind", default="donchian", choices=["donchian", "ma_cross"], help="strategy (default donchian)")
+    s.add_argument("--fast", type=int, default=20, help="ma_cross: fast SMA length in bars (default 20)")
+    s.add_argument("--slow", type=int, default=50, help="ma_cross: slow SMA length in bars (default 50)")
+    s.add_argument("--cross-window", type=int, default=2, help="ma_cross: bars after a cross an entry is still taken (default 2)")
     s.add_argument("--entry", type=int, default=55, help="breakout lookback in days (default 55)")
     s.add_argument("--exit", type=int, default=20, help="exit channel lookback in days (default 20)")
     s.add_argument("--trend", type=int, default=200, help="trend filter SMA length (default 200)")
@@ -50,18 +54,24 @@ def _add_config_args(p: argparse.ArgumentParser) -> None:
 
 def _configs(a: argparse.Namespace) -> tuple[StrategyConfig, CostConfig, RiskConfig]:
     return (
-        StrategyConfig(a.entry, a.exit, a.trend, a.atr, a.stop_atr, not a.long_only, a.trail_atr),
+        StrategyConfig(a.entry, a.exit, a.trend, a.atr, a.stop_atr, not a.long_only, a.trail_atr, a.kind, a.fast, a.slow, a.cross_window),
         CostConfig(a.spread, a.slippage, a.commission, a.swap_long, a.swap_short),
         RiskConfig(a.risk, a.max_leverage, a.lot_step, a.max_daily_loss, a.max_drawdown),
     )
+
+
+def _grid(a: argparse.Namespace) -> dict[str, list[int]]:
+    if a.kind == "ma_cross":
+        return {"fast_ma": _int_list(a.fasts), "slow_ma": _int_list(a.slows)}
+    return {"entry_lookback": _int_list(a.entries), "exit_lookback": _int_list(a.exits)}
 
 
 def _load(a: argparse.Namespace) -> pd.DataFrame:
     if a.data == "synthetic":
         print("WARNING: using SYNTHETIC random prices. Results say nothing about real gold.\n")
         return synthetic_daily()
-    df = load_daily(a.data, a.roll_hour)
-    print(f"Loaded {len(df):,} daily bars from {df.index[0].date()} to {df.index[-1].date()}\n")
+    df = load_bars(a.data, a.timeframe, a.roll_hour)
+    print(f"Loaded {len(df):,} {a.timeframe} bars from {df.index[0].date()} to {df.index[-1].date()}\n")
     return df
 
 
@@ -89,7 +99,7 @@ def _save_plot(equity: pd.Series, path: Path, title: str) -> None:
 def cmd_backtest(a: argparse.Namespace) -> None:
     df = _load(a)
     strategy, costs, risk = _configs(a)
-    result = run_backtest(df, strategy, costs, risk, a.equity, a.start, a.end)
+    result = run_backtest(df, strategy, costs, risk, a.equity, a.start, a.end, a.roll_hour)
     print("Backtest results")
     print(format_metrics(result.metrics))
     if result.metrics["skipped_signals"]:
@@ -119,12 +129,13 @@ def cmd_backtest(a: argparse.Namespace) -> None:
 def cmd_sweep(a: argparse.Namespace) -> None:
     df = _load(a)
     strategy, costs, risk = _configs(a)
-    grid = {"entry_lookback": _int_list(a.entries), "exit_lookback": _int_list(a.exits)}
-    table = parameter_sweep(df, strategy, grid, costs, risk, initial_equity=a.equity, start=a.start, end=a.end)
-    print("MAR (CAGR / max drawdown) by entry (rows) and exit (columns) lookback:")
-    print(table.pivot(index="entry_lookback", columns="exit_lookback", values="mar").round(2).to_string())
+    grid = _grid(a)
+    rows, cols = list(grid)
+    table = parameter_sweep(df, strategy, grid, costs, risk, initial_equity=a.equity, start=a.start, end=a.end, roll_hour_utc=a.roll_hour)
+    print(f"MAR (CAGR / max drawdown) by {rows} (rows) and {cols} (columns):")
+    print(table.pivot(index=rows, columns=cols, values="mar").round(2).to_string())
     print("\nSharpe:")
-    print(table.pivot(index="entry_lookback", columns="exit_lookback", values="sharpe").round(2).to_string())
+    print(table.pivot(index=rows, columns=cols, values="sharpe").round(2).to_string())
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     table.to_csv(out / "sweep.csv", index=False)
@@ -134,8 +145,7 @@ def cmd_sweep(a: argparse.Namespace) -> None:
 def cmd_walkforward(a: argparse.Namespace) -> None:
     df = _load(a)
     strategy, costs, risk = _configs(a)
-    grid = {"entry_lookback": _int_list(a.entries), "exit_lookback": _int_list(a.exits)}
-    wf = walk_forward(df, strategy, grid, costs, risk, a.train_years, a.test_years, a.objective, initial_equity=a.equity)
+    wf = walk_forward(df, strategy, _grid(a), costs, risk, a.train_years, a.test_years, a.objective, initial_equity=a.equity, roll_hour_utc=a.roll_hour)
     with pd.option_context("display.width", 200, "display.max_columns", 20):
         print(wf.windows.to_string(index=False))
     print("\nOut-of-sample results (only periods the optimiser never saw)")
@@ -164,7 +174,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("data", help="CSV of gold prices (daily or intraday), or 'synthetic' for a demo")
         p.add_argument("--start", help="first date to trade, e.g. 2015-01-01")
         p.add_argument("--end", help="last date to trade")
-        p.add_argument("--roll-hour", type=int, default=22, help="UTC hour the trading day ends (default 22)")
+        p.add_argument("--roll-hour", type=int, default=22, help="hour (in the file's clock) the trading day ends (default 22; use 0 for MT5 server-time exports)")
+        p.add_argument("--timeframe", default="D1", choices=["D1", "H4", "H1"], help="bar size to trade (default D1)")
         p.add_argument("--out", default="results", help="output folder (default results/)")
         _add_config_args(p)
         p.set_defaults(func=func)
@@ -179,6 +190,8 @@ def build_parser() -> argparse.ArgumentParser:
         p = data_command(name, func, help_text)
         p.add_argument("--entries", default="20,40,55,80,100", help="entry lookbacks to try")
         p.add_argument("--exits", default="10,20,30,40", help="exit lookbacks to try")
+        p.add_argument("--fasts", default="10,20,30,50", help="ma_cross: fast SMA lengths to try")
+        p.add_argument("--slows", default="50,100,150,200", help="ma_cross: slow SMA lengths to try")
         if name == "walkforward":
             p.add_argument("--train-years", type=float, default=4)
             p.add_argument("--test-years", type=float, default=1)

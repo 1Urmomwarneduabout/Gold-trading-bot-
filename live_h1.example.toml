@@ -1,0 +1,39 @@
+# Second bot: 1-hour moving-average crossover. Runs next to the daily bot (live.toml)
+# on the same MT5 account; its own magic number and state_dir keep the two apart.
+# Copy to live_h1.toml and start it with: goldbot live run --config live_h1.toml
+
+[live]
+symbol = "XAUUSD"              # exact name in your broker's Market Watch (XAUUSD, GOLD, XAUUSD.m, ...)
+magic = 7861002                # must differ from the daily bot's 7861001
+timeframe = "H1"               # act on every completed 1-hour bar
+history_bars = 400             # needs at least 201 for the 200-bar trend filter
+wait_after_open_minutes = 1    # a moment for the new hourly bar to settle
+max_spread = 1.0               # USD/oz; postpone trading while the spread is wider
+max_wait_hours = 0.5           # then exits go through anyway and entries are skipped
+deviation_points = 50          # max slippage on market orders, in points
+allow_live = false             # must be true before it will touch a real-money account
+dry_run = false                # true = log orders without sending them
+poll_seconds = 30
+state_dir = "state_h1"         # must differ from the daily bot's "state"
+heartbeat_url = ""
+
+# Picked by the walk-forward (latest window, 2021-11 to 2025-11): goldbot walkforward
+# data/broker_h1.csv --timeframe H1 --kind ma_cross --trend 200 --roll-hour 0
+[strategy]
+kind = "ma_cross"
+fast_ma = 20                   # in 1-hour bars
+slow_ma = 50
+cross_window = 2
+trend_lookback = 200           # only trade in the direction of the 200-hour average; 0 = off
+atr_lookback = 20
+stop_atr = 2.0
+allow_short = true
+trail_atr = 0.0
+
+# Half the daily bot's risk: in backtests this strategy's drawdowns were about 4x deeper,
+# and both bots share one account, so its losses count toward the daily bot's kill switch too.
+[risk]
+risk_per_trade = 0.005
+max_leverage = 5.0
+max_daily_loss = 0.03
+max_drawdown = 0.20
