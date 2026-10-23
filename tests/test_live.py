@@ -96,7 +96,7 @@ class RecordingNotifier(Notifier):
         super().__init__()
         self.messages = []
 
-    def send(self, text, level=20):
+    def send(self, text, level=20, sound=None):
         self.messages.append(text)
 
 

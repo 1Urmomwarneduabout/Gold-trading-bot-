@@ -37,11 +37,16 @@ class Notifier:
     def from_env(cls, prefix: str = "goldbot") -> "Notifier":
         return cls(_setting("TELEGRAM_BOT_TOKEN"), _setting("TELEGRAM_CHAT_ID"), prefix)
 
-    def send(self, text: str, level: int = logging.INFO) -> None:
+    def send(self, text: str, level: int = logging.INFO, sound: bool | None = None) -> None:
+        """Errors (or sound=True) ring in Telegram; everything else arrives silently."""
         log.log(level, text)
         if not (self.token and self.chat_id):
             return
-        body = json.dumps({"chat_id": self.chat_id, "text": f"[{self.prefix}] {text}"}).encode()
+        if sound is None:
+            sound = level >= logging.ERROR
+        body = json.dumps(
+            {"chat_id": self.chat_id, "text": f"[{self.prefix}] {text}", "disable_notification": not sound}
+        ).encode()
         request = urllib.request.Request(
             f"https://api.telegram.org/bot{self.token}/sendMessage",
             data=body,

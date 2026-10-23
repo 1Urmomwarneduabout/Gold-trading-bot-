@@ -220,7 +220,7 @@ class LiveTrader:
                 note, price = "no deal history found", ""
             journal(cfg.journal_file, time=_now(), event="closed_by_broker", side=state.position.side,
                     lots=state.position.volume, price=price, sl=state.position.sl, equity=account.equity, note=note)
-            self.notify.send(f"Position {state.position.ticket} was closed on the broker side (stop-loss hit?): {note}.")
+            self.notify.send(f"Position {state.position.ticket} was closed on the broker side (stop-loss hit?): {note}.", sound=True)
             state.position = None
             return None
         position = ours[0]
@@ -229,7 +229,7 @@ class LiveTrader:
             return None
         if position.sl == 0:
             self.broker.set_stop(cfg.symbol, position, state.position.sl)
-            self.notify.send(f"Position {position.ticket} had no stop-loss on the server; restored it at {state.position.sl}.", logging.WARNING)
+            self.notify.send(f"Position {position.ticket} had no stop-loss on the server; restored it at {state.position.sl}.", logging.WARNING, sound=True)
         return position
 
     def _enter(self, state: BotState, side: int, atr: float, spec: SymbolSpec, tick: Tick, account: Account, bar: str) -> str:
@@ -261,7 +261,7 @@ class LiveTrader:
         state.position = OpenTrade(ticket=ticket, side=side, volume=fill.volume, entry_price=fill.price, sl=sl, opened_at=_now(), signal_bar=bar)
         journal(cfg.journal_file, time=_now(), event="entry", side=side, lots=fill.volume, price=fill.price, sl=sl, equity=account.equity, note=bar)
         msg = f"opened {word} {fill.volume} lots at {fill.price:.2f}, stop {sl:.2f} (risk about {fill.volume * spec.contract_size * stop_distance:,.0f})"
-        self.notify.send(msg)
+        self.notify.send(msg, sound=True)
         return msg
 
     def _trail(self, state: BotState, position: Position, close: float, atr: float, spec: SymbolSpec, tick: Tick) -> str:
@@ -294,7 +294,7 @@ class LiveTrader:
                 price=fill.price, sl=position.sl, equity=account.equity, note=f"entry {position.price_open:.2f}")
         state.position = None
         msg = f"closed position {position.ticket} at {fill.price:.2f} ({reason}); open profit before close was {position.profit:,.2f}"
-        self.notify.send(msg)
+        self.notify.send(msg, sound=True)
         return msg
 
 
