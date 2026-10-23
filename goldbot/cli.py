@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .agents import add_agents_command
 from .backtest import CostConfig, run_backtest
 from .broker import BrokerError
 from .data import load_bars, load_daily, synthetic_daily
@@ -204,6 +205,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_resample)
 
     add_live_commands(sub)
+    add_agents_command(sub)
     return parser
 
 

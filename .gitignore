@@ -15,3 +15,6 @@ live.toml
 live_h1.toml
 state/
 state_h1/
+
+# TradingAgents lives in its own environment
+.venv-agents/

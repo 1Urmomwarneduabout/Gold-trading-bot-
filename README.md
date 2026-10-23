@@ -154,3 +154,17 @@ live.example.toml  live bot settings
 docs/MT5_SETUP.md  step-by-step MetaTrader 5 setup
 docs/ROADMAP.md    what's done, what's next, and the upkeep schedule
 ```
+
+## Second opinion from TradingAgents (advice only)
+
+[TradingAgents](https://github.com/TauricResearch/TradingAgents) (v0.7.0) runs a team of AI analysts (market, news, social), a bull/bear debate and a risk review, then rates gold Buy / Overweight / Hold / Underweight / Sell. It never places or changes orders. Use it as a check before manual trades or to sanity-check what the bots hold.
+
+It lives in its own environment, `.venv-agents`, so it cannot affect the live bots.
+
+1. Save an API key once (Claude by default), then open a new terminal:
+   `setx ANTHROPIC_API_KEY "your-key"`
+2. Run it:
+   `.venv-agents\Scripts\goldbot.exe agents` (prints the view and the bots' positions)
+   `.venv-agents\Scripts\goldbot.exe agents --notify` (also sends it to Telegram, silently)
+
+Options: `--ticker GLD`, `--date 2026-10-20`, `--provider openai --quick-model ... --deep-model ...`, `--debate-rounds 2`, `--verbose`. Full reports are saved under `results/agents/`. Each run makes dozens of LLM calls, so it costs money and takes several minutes; LLM output varies from run to run.
