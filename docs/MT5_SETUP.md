@@ -128,13 +128,19 @@ broker's server, about $15-40/month):
 1. Install MT5, Python and the bot as above. Log the terminal in and leave it open.
 2. Put a shortcut to MT5 in `shell:startup` so it opens when you log in, and
    configure Windows to log in automatically after a reboot.
-3. **Task Scheduler > Create Task**:
-   * Trigger: *At log on*.
-   * Action: start `C:\path\to\Gold-trading-bot-\.venv\Scripts\goldbot.exe`
-     with arguments `live run --config live.toml`, *Start in*
-     `C:\path\to\Gold-trading-bot-`.
-   * Settings: *If the task fails, restart every 1 minute*, up to 999 times.
-     Untick *Stop the task if it runs longer than...*.
+3. Register the scheduled task that starts the bot when you log in and
+   restarts it if it crashes. In PowerShell, in the repository folder:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\install_task.ps1
+   schtasks /run /tn "GoldBot"
+   ```
+   The script checks that `.venv\Scripts\goldbot.exe` and `live.toml` exist
+   before registering anything. Add `-DryRun` to schedule `live run --dry-run`
+   instead, or `-Uninstall` to remove the task. It needs no administrator rights.
+
+   The task runs as you and only while you're logged in. Don't change it to
+   *Run whether user is logged on or not* or to SYSTEM: the bot would then
+   start in a different Windows session, where it can't see the MT5 terminal.
 4. Reboot once to prove everything comes back by itself.
 
 ## 9. Going live
@@ -158,6 +164,8 @@ Only after the README's go-live checklist passes:
 | `retcode 10027` | Algo trading disabled in the terminal (see above). |
 | `retcode 10018` | Market closed (weekend or holiday); it will retry. |
 | `retcode 10019` | Not enough margin: lower `risk_per_trade` or `max_leverage`. |
+| `schtasks`: *The system cannot find the file specified* | Register the task with `scripts\install_task.ps1` (step 8); the repo ships no task XML. |
+| Task registered but the bot isn't running | `schtasks /query /tn "GoldBot" /v /fo list`: a *Last Result* other than 0 or 267009 (still running) means the bot exited. The reason is at the end of `state\goldbot.log`. |
 | `retcode 10016` | Stop too close to price for this broker; check the min stop distance in `live check`. |
 | `HALTED: found position ... it did not open` | A position carries the bot's magic number but isn't in `state/state.json`. Close or adopt it manually, fix the state file, then `goldbot live reset-halt`. |
 | `KILL SWITCH: drawdown exceeded 20%` | Working as designed. Review the journal before `goldbot live reset-halt`. |
