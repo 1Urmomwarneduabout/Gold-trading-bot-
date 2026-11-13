@@ -166,6 +166,7 @@ Only after the README's go-live checklist passes:
 | `retcode 10019` | Not enough margin: lower `risk_per_trade` or `max_leverage`. |
 | `schtasks`: *The system cannot find the file specified* | Register the task with `scripts\install_task.ps1` (step 8); the repo ships no task XML. |
 | Task registered but the bot isn't running | `schtasks /query /tn "GoldBot" /v /fo list`: a *Last Result* other than 0 or 267009 (still running) means the bot exited. The reason is at the end of `state\goldbot.log`. |
+| More than one `goldbot.exe` running, or several goldbot tasks | Run `scripts\doctor.ps1` from an Administrator PowerShell. It shows every task, config and running copy, and offers to disable duplicate tasks. |
 | `retcode 10016` | Stop too close to price for this broker; check the min stop distance in `live check`. |
 | `HALTED: found position ... it did not open` | A position carries the bot's magic number but isn't in `state/state.json`. Close or adopt it manually, fix the state file, then `goldbot live reset-halt`. |
 | `KILL SWITCH: drawdown exceeded 20%` | Working as designed. Review the journal before `goldbot live reset-halt`. |

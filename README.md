@@ -152,6 +152,7 @@ goldbot/
 tests/           42 tests, including a no-lookahead check and the live loop against a fake broker
 live.example.toml  live bot settings
 scripts/install_task.ps1  Windows scheduled task that keeps the bot running
+scripts/doctor.ps1       checks tasks, configs and running copies; turns off duplicate tasks
 docs/MT5_SETUP.md  step-by-step MetaTrader 5 setup
 docs/ROADMAP.md    what's done, what's next, and the upkeep schedule
 ```
